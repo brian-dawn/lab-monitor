@@ -1085,6 +1085,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "comfy-table",
+ "crossterm",
  "env_logger",
  "futures",
  "hostname",

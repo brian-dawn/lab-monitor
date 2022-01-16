@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use crossterm::{cursor, QueueableCommand};
 use futures::StreamExt;
 use libp2p::{
     core::{
@@ -26,7 +27,14 @@ use libp2p::{
     Transport,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, error::Error, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    io::{stdout, Write},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use systemstat::Platform;
 use tokio::{
     io::{self, AsyncBufReadExt},
@@ -165,6 +173,8 @@ async fn main() -> Result<()> {
     // Listen on all interfaces and whatever port the OS assigns
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
+    let mut stdout = stdout();
+
     // Kick it off
     loop {
         tokio::select! {
@@ -183,6 +193,10 @@ async fn main() -> Result<()> {
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
 
                 render_db(&swarm.behaviour().db);
+
+                stdout.queue(cursor::SavePosition)?;
+                stdout.flush();
+                stdout.queue(cursor::RestorePosition)?;
             }
 
             event = swarm.select_next_some() => {

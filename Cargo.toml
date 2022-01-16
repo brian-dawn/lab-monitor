@@ -19,3 +19,4 @@ hostname = "^0.3"
 anyhow = "1"
 
 comfy-table = "5.0.0"
+crossterm = "0.22.1"
