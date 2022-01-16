@@ -110,15 +110,7 @@ async fn main() -> Result<()> {
                 // Update our database of system infos.
                 if let Ok(system_info) = serde_json::from_slice::<SystemInfo>(&message.data) {
                     self.db.insert(system_info.hostname.clone(), system_info);
-
-                    println!("db: {:?}", self.db);
                 }
-
-                println!(
-                    "Received: '{:?}' from {:?}",
-                    String::from_utf8_lossy(&message.data),
-                    message.source
-                );
             }
         }
     }
@@ -170,9 +162,6 @@ async fn main() -> Result<()> {
     //     println!("Dialed {:?}", to_dial)
     // }
 
-    // Read full lines from stdin
-    let mut stdin = io::BufReader::new(io::stdin()).lines();
-
     // Listen on all interfaces and whatever port the OS assigns
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
@@ -180,6 +169,7 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             delay = sleep(Duration::from_secs(1)) => {
+
 
                 let sys = systemstat::System::new();
                 let uptime = format!("{}", sys.uptime()?.as_secs());
@@ -190,11 +180,9 @@ async fn main() -> Result<()> {
 
                 let sys_info_json_str = serde_json::to_string(&sys_info)?;
 
-                //let line = line?.expect("stdin closed");
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
-            }
-            line = stdin.next_line() => {
 
+                render_db(&swarm.behaviour().db);
             }
 
             event = swarm.select_next_some() => {
@@ -204,6 +192,28 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
+
+fn render_db(db: &HashMap<String, SystemInfo>) {
+    use comfy_table::modifiers::UTF8_ROUND_CORNERS;
+    use comfy_table::presets::UTF8_FULL;
+    use comfy_table::*;
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_table_width(80)
+        .set_header(vec!["Hostname", "Uptime"]);
+
+    for (hostname, sys_info) in db {
+        table.add_row(vec![
+            Cell::new(hostname.clone()),
+            Cell::new(sys_info.uptime.clone()),
+        ]);
+    }
+    println!("{}", table);
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
