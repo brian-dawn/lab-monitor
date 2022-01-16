@@ -182,7 +182,7 @@ async fn main() -> Result<()> {
 
 
                 let sys = systemstat::System::new();
-                let uptime = format!("{}", sys.uptime()?.as_secs());
+                let uptime = sys.uptime()?.as_secs();
 
                 let hostname = hostname::get()?.into_string().ok().context("Failed to convert OsString to String")?;
                 let peer_id = peer_id.clone().to_string();
@@ -220,10 +220,8 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
         .set_header(vec!["Hostname", "Uptime"]);
 
     for (hostname, sys_info) in db {
-        table.add_row(vec![
-            Cell::new(hostname.clone()),
-            Cell::new(sys_info.uptime.clone()),
-        ]);
+        let human_uptime = humantime::format_duration(Duration::new(sys_info.uptime.into(), 0));
+        table.add_row(vec![Cell::new(hostname.clone()), Cell::new(human_uptime)]);
     }
 
     println!("{}", table);
@@ -233,5 +231,5 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
 struct SystemInfo {
     hostname: String,
     peer_id: String,
-    uptime: String,
+    uptime: u64,
 }
