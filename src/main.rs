@@ -31,6 +31,7 @@ use systemstat::Platform;
 use tokio::{
     io::{self, AsyncBufReadExt},
     sync::Mutex,
+    time::sleep,
 };
 
 /// Builds the transport that serves as a common ground for all connections.
@@ -178,7 +179,7 @@ async fn main() -> Result<()> {
     // Kick it off
     loop {
         tokio::select! {
-            line = stdin.next_line() => {
+            delay = sleep(Duration::from_secs(1)) => {
 
                 let sys = systemstat::System::new();
                 let uptime = format!("{}", sys.uptime()?.as_secs());
@@ -191,6 +192,9 @@ async fn main() -> Result<()> {
 
                 //let line = line?.expect("stdin closed");
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
+            }
+            line = stdin.next_line() => {
+
             }
 
             event = swarm.select_next_some() => {
