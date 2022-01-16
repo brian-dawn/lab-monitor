@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use crossterm::{cursor, QueueableCommand};
+use crossterm::{cursor, execute, QueueableCommand};
 use futures::StreamExt;
 use libp2p::{
     core::{
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     error::Error,
-    io::{stdout, Write},
+    io::{stdout, Stdout, Write},
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -192,10 +192,12 @@ async fn main() -> Result<()> {
 
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
 
-                render_db(&swarm.behaviour().db);
-
                 stdout.queue(cursor::SavePosition)?;
-                stdout.flush();
+
+                render_db(&swarm.behaviour().db, &mut stdout)?;
+
+                stdout.flush()?;
+
                 stdout.queue(cursor::RestorePosition)?;
             }
 
@@ -208,7 +210,7 @@ async fn main() -> Result<()> {
     }
 }
 
-fn render_db(db: &HashMap<String, SystemInfo>) {
+fn render_db(db: &HashMap<String, SystemInfo>, stdout: &mut Stdout) -> Result<()> {
     use comfy_table::modifiers::UTF8_ROUND_CORNERS;
     use comfy_table::presets::UTF8_FULL;
     use comfy_table::*;
@@ -227,7 +229,9 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
             Cell::new(sys_info.uptime.clone()),
         ]);
     }
-    println!("{}", table);
+
+    stdout.write(format!("{}", table).as_bytes())?;
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
