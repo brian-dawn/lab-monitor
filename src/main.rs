@@ -1,45 +1,79 @@
-
 use futures::StreamExt;
 use libp2p::{
-    core::upgrade,
+    core::{
+        either::EitherTransport,
+        muxing::StreamMuxerBox,
+        transport,
+        upgrade::{self, Version},
+    },
     floodsub::{self, Floodsub, FloodsubEvent},
     identity,
     mdns::{Mdns, MdnsEvent},
     mplex,
     noise,
+    pnet::{PnetConfig, PreSharedKey},
     swarm::{dial_opts::DialOpts, NetworkBehaviourEventProcess, SwarmBuilder, SwarmEvent},
     // `TokioTcpConfig` is available through the `tcp-tokio` feature.
-    tcp::TokioTcpConfig,
+    tcp::{TcpConfig, TokioTcpConfig},
+    yamux::YamuxConfig,
     Multiaddr,
     NetworkBehaviour,
     PeerId,
     Transport,
 };
-use std::error::Error;
+use std::{error::Error, str::FromStr, time::Duration};
 use tokio::io::{self, AsyncBufReadExt};
+
+/// Builds the transport that serves as a common ground for all connections.
+pub fn build_transport(
+    key_pair: identity::Keypair,
+    psk: Option<PreSharedKey>,
+) -> transport::Boxed<(PeerId, StreamMuxerBox)> {
+    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
+        .into_authentic(&key_pair)
+        .unwrap();
+    let noise_config = noise::NoiseConfig::xx(noise_keys).into_authenticated();
+    let yamux_config = YamuxConfig::default();
+
+    let base_transport = TcpConfig::new().nodelay(true);
+    let maybe_encrypted = match psk {
+        Some(psk) => EitherTransport::Left(
+            base_transport.and_then(move |socket, _| PnetConfig::new(psk).handshake(socket)),
+        ),
+        None => EitherTransport::Right(base_transport),
+    };
+    maybe_encrypted
+        .upgrade(Version::V1)
+        .authenticate(noise_config)
+        .multiplex(yamux_config)
+        .timeout(Duration::from_secs(20))
+        .boxed()
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
+
+    let psk_bytes = if let Some(secret) = std::env::args().nth(1) {
+        let mut bytes = [0u8; 32];
+        for (i, c) in secret.chars().enumerate() {
+            bytes[i] = c as u8;
+        }
+        bytes
+    } else {
+        *b"this is a secret psk padding paz"
+    };
+
+    // Create the private shared key to ensure safety on the network.
+    let psk: PreSharedKey = PreSharedKey::new(psk_bytes);
+    println!("using swarm key with fingerprint: {}", psk.fingerprint());
 
     // Create a random PeerId
     let id_keys = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(id_keys.public());
     println!("Local peer id: {peer_id}");
 
-    // Create a keypair for authenticated encryption of the transport.
-    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
-        .into_authentic(&id_keys)
-        .expect("Signing libp2p-noise static DH keypair failed.");
-
-    // Create a tokio-based TCP transport use noise for authenticated
-    // encryption and Mplex for multiplexing of substreams on a TCP stream.
-    let transport = TokioTcpConfig::new()
-        .nodelay(true)
-        .upgrade(upgrade::Version::V1)
-        .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-        .multiplex(mplex::MplexConfig::new())
-        .boxed();
+    let transport = build_transport(id_keys.clone(), Some(psk));
 
     // Create a Floodsub topic
     let floodsub_topic = floodsub::Topic::new("chat");
@@ -108,11 +142,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Reach out to another node if specified
-    if let Some(to_dial) = std::env::args().nth(1) {
-        let addr: Multiaddr = to_dial.parse()?;
-        swarm.dial(addr)?;
-        println!("Dialed {:?}", to_dial)
-    }
+    // if let Some(to_dial) = std::env::args().nth(1) {
+    //     let addr: Multiaddr = to_dial.parse()?;
+    //     swarm.dial(addr)?;
+    //     println!("Dialed {:?}", to_dial)
+    // }
 
     // Read full lines from stdin
     let mut stdin = io::BufReader::new(io::stdin()).lines();
