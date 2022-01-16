@@ -186,10 +186,9 @@ async fn main() -> Result<()> {
 
                 let hostname = hostname::get()?.into_string().ok().context("Failed to convert OsString to String")?;
                 let peer_id = peer_id.clone().to_string();
-                let sys_info = SystemInfo { hostname, peer_id, uptime, cpu_temp: sys.cpu_temp().ok(), memory: Some(Memory {
-                    free: sys.memory()?.free.as_u64(),
-                    total: sys.memory()?.total.as_u64(),
-                }) };
+                let sys_info = SystemInfo { hostname, peer_id, uptime, cpu_temp: sys.cpu_temp().ok(), memory:
+                    get_memory(&sys)
+                 };
 
                 let sys_info_json_str = serde_json::to_string(&sys_info)?;
 
@@ -257,6 +256,13 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
     }
 
     println!("{}", table);
+}
+
+fn get_memory(sys: &systemstat::System) -> Option<Memory> {
+    sys.memory().ok().map(|mem| Memory {
+        free: mem.free.as_u64(),
+        total: mem.total.as_u64(),
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
