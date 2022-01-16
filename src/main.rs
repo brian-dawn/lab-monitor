@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use futures::StreamExt;
 use libp2p::{
     core::{
@@ -12,7 +13,10 @@ use libp2p::{
     mplex,
     noise,
     pnet::{PnetConfig, PreSharedKey},
-    swarm::{dial_opts::DialOpts, NetworkBehaviourEventProcess, SwarmBuilder, SwarmEvent},
+    swarm::{
+        dial_opts::DialOpts, NetworkBehaviour, NetworkBehaviourEventProcess, SwarmBuilder,
+        SwarmEvent,
+    },
     // `TokioTcpConfig` is available through the `tcp-tokio` feature.
     tcp::{TcpConfig, TokioTcpConfig},
     yamux::YamuxConfig,
@@ -21,8 +25,13 @@ use libp2p::{
     PeerId,
     Transport,
 };
-use std::{error::Error, str::FromStr, time::Duration};
-use tokio::io::{self, AsyncBufReadExt};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, error::Error, str::FromStr, sync::Arc, time::Duration};
+use systemstat::Platform;
+use tokio::{
+    io::{self, AsyncBufReadExt},
+    sync::Mutex,
+};
 
 /// Builds the transport that serves as a common ground for all connections.
 pub fn build_transport(
@@ -51,7 +60,7 @@ pub fn build_transport(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     env_logger::init();
 
     let psk_bytes = if let Some(secret) = std::env::args().nth(1) {
@@ -87,12 +96,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     struct MyBehaviour {
         floodsub: Floodsub,
         mdns: Mdns,
+
+        #[behaviour(ignore)]
+        #[allow(dead_code)]
+        db: HashMap<String, SystemInfo>,
     }
 
     impl NetworkBehaviourEventProcess<FloodsubEvent> for MyBehaviour {
         // Called when `floodsub` produces an event.
         fn inject_event(&mut self, message: FloodsubEvent) {
             if let FloodsubEvent::Message(message) = message {
+                // Update our database of system infos.
+                if let Ok(system_info) = serde_json::from_slice::<SystemInfo>(&message.data) {
+                    self.db.insert(system_info.hostname.clone(), system_info);
+
+                    println!("db: {:?}", self.db);
+                }
+
                 println!(
                     "Received: '{:?}' from {:?}",
                     String::from_utf8_lossy(&message.data),
@@ -128,6 +148,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut behaviour = MyBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             mdns,
+            db: HashMap::new(),
         };
 
         behaviour.floodsub.subscribe(floodsub_topic.clone());
@@ -158,9 +179,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         tokio::select! {
             line = stdin.next_line() => {
-                let line = line?.expect("stdin closed");
-                swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), line.as_bytes());
+
+                let sys = systemstat::System::new();
+                let uptime = format!("{}", sys.uptime()?.as_secs());
+
+                let hostname = hostname::get()?.into_string().ok().context("Failed to convert OsString to String")?;
+                let peer_id = peer_id.clone().to_string();
+                let sys_info = SystemInfo { hostname, peer_id, uptime};
+
+                let sys_info_json_str = serde_json::to_string(&sys_info)?;
+
+                //let line = line?.expect("stdin closed");
+                swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
             }
+
             event = swarm.select_next_some() => {
                 if let SwarmEvent::NewListenAddr { address, .. } = event {
                     println!("Listening on {:?}", address);
@@ -168,4 +200,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+struct SystemInfo {
+    hostname: String,
+    peer_id: String,
+    uptime: String,
 }
