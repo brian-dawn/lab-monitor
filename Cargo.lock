@@ -356,6 +356,9 @@ name = "bytesize"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c58ec36aac5066d5ca17df51b3e70279f5670a72102f5752cb7e7c856adfc70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cache-padded"
@@ -409,6 +412,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
+ "serde",
  "winapi",
 ]
 
@@ -2438,6 +2442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-feature-hack"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ff5ff54f681a101d1a36cd5e4fe8b65eda3c9c5dafcdb2b9bbd7736f2381c71"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.133"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2676,6 +2689,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "nom",
+ "serde-feature-hack",
  "winapi",
 ]
 

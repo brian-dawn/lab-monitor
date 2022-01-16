@@ -8,7 +8,7 @@ use libp2p::{
         transport,
         upgrade::{self, Version},
     },
-    floodsub::{self, Floodsub, FloodsubEvent},
+    floodsub::{self, Floodsub, FloodsubEvent, Topic},
     identity,
     mdns::{Mdns, MdnsEvent},
     mplex,
@@ -24,6 +24,7 @@ use libp2p::{
     Multiaddr,
     NetworkBehaviour,
     PeerId,
+    Swarm,
     Transport,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,53 @@ use tokio::{
     sync::Mutex,
     time::sleep,
 };
+
+// We create a custom network behaviour that combines floodsub and mDNS.
+// The derive generates a delegating `NetworkBehaviour` impl which in turn
+// requires the implementations of `NetworkBehaviourEventProcess` for
+// the events of each behaviour.
+#[derive(NetworkBehaviour)]
+#[behaviour(event_process = true)]
+struct MyBehaviour {
+    floodsub: Floodsub,
+    mdns: Mdns,
+
+    #[behaviour(ignore)]
+    #[allow(dead_code)]
+    db: HashMap<String, SystemInfo>,
+}
+
+impl NetworkBehaviourEventProcess<FloodsubEvent> for MyBehaviour {
+    // Called when `floodsub` produces an event.
+    fn inject_event(&mut self, message: FloodsubEvent) {
+        if let FloodsubEvent::Message(message) = message {
+            // Update our database of system infos.
+            if let Ok(system_info) = serde_json::from_slice::<SystemInfo>(&message.data) {
+                self.db.insert(system_info.hostname.clone(), system_info);
+            }
+        }
+    }
+}
+
+impl NetworkBehaviourEventProcess<MdnsEvent> for MyBehaviour {
+    // Called when `mdns` produces an event.
+    fn inject_event(&mut self, event: MdnsEvent) {
+        match event {
+            MdnsEvent::Discovered(list) => {
+                for (peer, _) in list {
+                    self.floodsub.add_node_to_partial_view(peer);
+                }
+            }
+            MdnsEvent::Expired(list) => {
+                for (peer, _) in list {
+                    if !self.mdns.has_node(&peer) {
+                        self.floodsub.remove_node_from_partial_view(&peer);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Builds the transport that serves as a common ground for all connections.
 pub fn build_transport(
@@ -96,53 +144,6 @@ async fn main() -> Result<()> {
     // Create a Floodsub topic
     let floodsub_topic = floodsub::Topic::new("chat");
 
-    // We create a custom network behaviour that combines floodsub and mDNS.
-    // The derive generates a delegating `NetworkBehaviour` impl which in turn
-    // requires the implementations of `NetworkBehaviourEventProcess` for
-    // the events of each behaviour.
-    #[derive(NetworkBehaviour)]
-    #[behaviour(event_process = true)]
-    struct MyBehaviour {
-        floodsub: Floodsub,
-        mdns: Mdns,
-
-        #[behaviour(ignore)]
-        #[allow(dead_code)]
-        db: HashMap<String, SystemInfo>,
-    }
-
-    impl NetworkBehaviourEventProcess<FloodsubEvent> for MyBehaviour {
-        // Called when `floodsub` produces an event.
-        fn inject_event(&mut self, message: FloodsubEvent) {
-            if let FloodsubEvent::Message(message) = message {
-                // Update our database of system infos.
-                if let Ok(system_info) = serde_json::from_slice::<SystemInfo>(&message.data) {
-                    self.db.insert(system_info.hostname.clone(), system_info);
-                }
-            }
-        }
-    }
-
-    impl NetworkBehaviourEventProcess<MdnsEvent> for MyBehaviour {
-        // Called when `mdns` produces an event.
-        fn inject_event(&mut self, event: MdnsEvent) {
-            match event {
-                MdnsEvent::Discovered(list) => {
-                    for (peer, _) in list {
-                        self.floodsub.add_node_to_partial_view(peer);
-                    }
-                }
-                MdnsEvent::Expired(list) => {
-                    for (peer, _) in list {
-                        if !self.mdns.has_node(&peer) {
-                            self.floodsub.remove_node_from_partial_view(&peer);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Create a Swarm to manage peers and events.
     let mut swarm = {
         let mdns = Mdns::new(Default::default()).await?;
@@ -176,28 +177,12 @@ async fn main() -> Result<()> {
     let mut stdout = stdout();
 
     // Kick it off
+
     loop {
         tokio::select! {
             delay = sleep(Duration::from_secs(1)) => {
 
-
-                let sys = systemstat::System::new();
-                let uptime = sys.uptime()?.as_secs();
-
-                let hostname = hostname::get()?.into_string().ok().context("Failed to convert OsString to String")?;
-                let peer_id = peer_id.clone().to_string();
-                let sys_info = SystemInfo { hostname, peer_id, uptime, cpu_temp: sys.cpu_temp().ok(), memory:
-                    get_memory(&sys)
-                 };
-
-                let sys_info_json_str = serde_json::to_string(&sys_info)?;
-
-                swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
-
-                // Also insert ourselves into the db.
-                swarm.behaviour_mut().db.insert(sys_info.hostname.clone(), sys_info);
-
-                render_db(&swarm.behaviour().db);
+                send_system_info(&mut swarm, peer_id.clone(), &floodsub_topic).await?;
 
             }
 
@@ -208,6 +193,57 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
+
+async fn send_system_info(
+    swarm: &mut Swarm<MyBehaviour>,
+    peer_id: PeerId,
+    floodsub_topic: &Topic,
+) -> Result<()> {
+    let sys = systemstat::System::new();
+
+    let cpu_load = if let Ok(cpu_load) = sys.cpu_load_aggregate() {
+        // Wait a second to measure CPU load.
+        sleep(Duration::from_secs(1)).await;
+        let cpu = cpu_load.done()?;
+
+        Some(cpu)
+    } else {
+        None
+    };
+
+    let uptime = sys.uptime()?.as_secs();
+
+    let hostname = hostname::get()?
+        .into_string()
+        .ok()
+        .context("Failed to convert OsString to String")?;
+    let peer_id = peer_id.clone().to_string();
+    let sys_info = SystemInfo {
+        hostname,
+        peer_id,
+        uptime,
+        cpu_temp: sys.cpu_temp().ok(),
+        memory: get_memory(&sys),
+        cpu_load_aggregate: cpu_load,
+    };
+
+    let sys_info_json_str = serde_json::to_string(&sys_info)?;
+
+    swarm
+        .behaviour_mut()
+        .floodsub
+        .publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
+
+    // Also insert ourselves into the db.
+    swarm
+        .behaviour_mut()
+        .db
+        .insert(sys_info.hostname.clone(), sys_info);
+
+    render_db(&swarm.behaviour().db);
+
+    Ok(())
 }
 
 fn render_db(db: &HashMap<String, SystemInfo>) {
@@ -226,6 +262,7 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
             "Uptime",
             "Cpu Temp(c)",
             "Memory(free GB/total GB)",
+            "CPU",
         ]);
 
     for (hostname, sys_info) in db {
@@ -252,6 +289,16 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
                     })
                     .unwrap_or_else(|| "".into()),
             ),
+            Cell::new(
+                sys_info
+                    .cpu_load_aggregate
+                    .as_ref()
+                    .map(|load| {
+                        //
+                        format!("{:.1}%", load.user * 100.0)
+                    })
+                    .unwrap_or_else(|| "".into()),
+            ),
         ]);
     }
 
@@ -265,7 +312,7 @@ fn get_memory(sys: &systemstat::System) -> Option<Memory> {
     })
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct SystemInfo {
     hostname: String,
     peer_id: String,
@@ -273,6 +320,7 @@ struct SystemInfo {
     cpu_temp: Option<f32>,
 
     memory: Option<Memory>,
+    cpu_load_aggregate: Option<systemstat::CPULoad>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
