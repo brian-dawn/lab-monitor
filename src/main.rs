@@ -186,12 +186,17 @@ async fn main() -> Result<()> {
 
                 let hostname = hostname::get()?.into_string().ok().context("Failed to convert OsString to String")?;
                 let peer_id = peer_id.clone().to_string();
-                let sys_info = SystemInfo { hostname, peer_id, uptime};
+                let sys_info = SystemInfo { hostname, peer_id, uptime, cpu_temp: sys.cpu_temp().ok(), memory: Some(Memory {
+                    free: sys.memory()?.free.as_u64(),
+                    total: sys.memory()?.total.as_u64(),
+                }) };
 
                 let sys_info_json_str = serde_json::to_string(&sys_info)?;
 
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
 
+                // Also insert ourselves into the db.
+                swarm.behaviour_mut().db.insert(sys_info.hostname.clone(), sys_info);
 
                 render_db(&swarm.behaviour().db);
 
@@ -217,11 +222,38 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_table_width(80)
-        .set_header(vec!["Hostname", "Uptime"]);
+        .set_header(vec![
+            "Hostname",
+            "Uptime",
+            "Cpu Temp(c)",
+            "Memory(free GB/total GB)",
+        ]);
 
     for (hostname, sys_info) in db {
         let human_uptime = humantime::format_duration(Duration::new(sys_info.uptime.into(), 0));
-        table.add_row(vec![Cell::new(hostname.clone()), Cell::new(human_uptime)]);
+        table.add_row(vec![
+            Cell::new(hostname.clone()),
+            Cell::new(human_uptime),
+            Cell::new(
+                sys_info
+                    .cpu_temp
+                    .map(|temp| format!("{:.1}", temp))
+                    .unwrap_or_else(|| "".into()),
+            ),
+            Cell::new(
+                sys_info
+                    .memory
+                    .as_ref()
+                    .map(|mem| {
+                        format!(
+                            "{:.1}/{:.1}",
+                            mem.free as f64 / 1024.0 / 1024.0 / 1024.0,
+                            mem.total as f64 / 1024.0 / 1024.0 / 1024.0
+                        )
+                    })
+                    .unwrap_or_else(|| "".into()),
+            ),
+        ]);
     }
 
     println!("{}", table);
@@ -232,4 +264,13 @@ struct SystemInfo {
     hostname: String,
     peer_id: String,
     uptime: u64,
+    cpu_temp: Option<f32>,
+
+    memory: Option<Memory>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+struct Memory {
+    total: u64,
+    free: u64,
 }
