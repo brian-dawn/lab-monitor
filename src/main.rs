@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     // Create a random PeerId
     let id_keys = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(id_keys.public());
-    println!("Local peer id: {peer_id}");
+    println!("Local peer id: {}", peer_id);
 
     let transport = build_transport(id_keys.clone(), Some(psk));
 
