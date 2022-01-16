@@ -192,13 +192,9 @@ async fn main() -> Result<()> {
 
                 swarm.behaviour_mut().floodsub.publish(floodsub_topic.clone(), sys_info_json_str.as_bytes());
 
-                stdout.queue(cursor::SavePosition)?;
 
-                render_db(&swarm.behaviour().db, &mut stdout)?;
+                render_db(&swarm.behaviour().db);
 
-                stdout.flush()?;
-
-                stdout.queue(cursor::RestorePosition)?;
             }
 
             event = swarm.select_next_some() => {
@@ -210,7 +206,7 @@ async fn main() -> Result<()> {
     }
 }
 
-fn render_db(db: &HashMap<String, SystemInfo>, stdout: &mut Stdout) -> Result<()> {
+fn render_db(db: &HashMap<String, SystemInfo>) {
     use comfy_table::modifiers::UTF8_ROUND_CORNERS;
     use comfy_table::presets::UTF8_FULL;
     use comfy_table::*;
@@ -230,8 +226,7 @@ fn render_db(db: &HashMap<String, SystemInfo>, stdout: &mut Stdout) -> Result<()
         ]);
     }
 
-    stdout.write(format!("{}", table).as_bytes())?;
-    Ok(())
+    println!("{}", table);
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
