@@ -200,6 +200,12 @@ async fn send_system_info(
     peer_id: PeerId,
     floodsub_topic: &Topic,
 ) -> Result<()> {
+    let os = Some(format!(
+        "{} {}",
+        os_info::get().os_type(),
+        os_info::get().version()
+    ));
+
     let sys = systemstat::System::new();
 
     let cpu_load = if let Ok(cpu_load) = sys.cpu_load_aggregate() {
@@ -226,6 +232,7 @@ async fn send_system_info(
         cpu_temp: sys.cpu_temp().ok(),
         memory: get_memory(&sys),
         cpu_load_aggregate: cpu_load,
+        os,
     };
 
     let sys_info_json_str = serde_json::to_string(&sys_info)?;
@@ -263,6 +270,7 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
             "Cpu Temp(c)",
             "Memory(free GB/total GB)",
             "CPU",
+            "OS",
         ]);
 
     for (hostname, sys_info) in db {
@@ -299,6 +307,7 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
                     })
                     .unwrap_or_else(|| "".into()),
             ),
+            Cell::new(sys_info.os.as_ref().unwrap_or(&"".to_owned())),
         ]);
     }
 
@@ -321,6 +330,7 @@ struct SystemInfo {
 
     memory: Option<Memory>,
     cpu_load_aggregate: Option<systemstat::CPULoad>,
+    os: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]

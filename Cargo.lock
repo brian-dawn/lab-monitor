@@ -1095,6 +1095,7 @@ dependencies = [
  "hostname",
  "humantime",
  "libp2p",
+ "os_info",
  "serde",
  "serde_json",
  "systemstat",
@@ -1909,6 +1910,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "os_info"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "198e392be7e882f0c2836f425e430f81d9a0e99651e4646311347417cddbfd43"
+dependencies = [
+ "log",
+ "serde",
+ "winapi",
 ]
 
 [[package]]
