@@ -273,7 +273,10 @@ fn render_db(db: &HashMap<String, SystemInfo>) {
             "OS",
         ]);
 
-    for (hostname, sys_info) in db {
+    let mut sorted = db.iter().collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (hostname, sys_info) in sorted.into_iter() {
         let human_uptime = humantime::format_duration(Duration::new(sys_info.uptime.into(), 0));
         table.add_row(vec![
             Cell::new(hostname.clone()),
